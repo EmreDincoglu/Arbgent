@@ -1,0 +1,42 @@
+{
+  "name": "Arbgent",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "lint": "eslint . --fix",
+    "format": "prettier --write . "
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^11.1.2",
+      "onFail": "download"
+    }
+  },
+  "type": "module",
+  "dependencies": {
+    "@arbitrum/sdk": "^4.0.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^17.4.2",
+    "ethers": "^5.7.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@offchainlabs/prettier-config": "^0.3.0",
+    "@trivago/prettier-plugin-sort-imports": "^6.0.2",
+    "@types/eslint": "^9.6.1",
+    "@types/node": "^25.9.3",
+    "eslint": "^10.4.1",
+    "globals": "^17.6.0",
+    "jiti": "^2.7.0",
+    "prettier": "^3.8.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.61.0"
+  }
+}

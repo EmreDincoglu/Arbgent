@@ -1,4 +1,10 @@
-import { ChildToParentMessageStatus, ChildToParentMessageWriter, ChildTransactionReceipt, EthBridger, EthDepositMessageStatus, ParentTransactionReceipt } from '@arbitrum/sdk';
+import {
+  ChildToParentMessageStatus,
+  ChildTransactionReceipt,
+  EthBridger,
+  EthDepositMessageStatus,
+  ParentTransactionReceipt,
+} from '@arbitrum/sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { config } from 'dotenv';
@@ -15,48 +21,23 @@ if (process.env.PRIVATE_KEY == undefined) {
 }
 const rpcProviders = new Map<number, providers.JsonRpcProvider>();
 
-// Bad way but who cares for now
+// Much better
 rpcProviders.set(
   CHAIN_INFO.ArbOne.chainID,
-  new providers.JsonRpcProvider(CHAIN_INFO.ArbOne.RPC_URL),
+  new providers.JsonRpcProvider(process.env.ARB_ONE_RPC ?? CHAIN_INFO.ArbOne.RPC_URL),
 );
 rpcProviders.set(
   CHAIN_INFO.ArbSepolia.chainID,
-  new providers.JsonRpcProvider(CHAIN_INFO.ArbSepolia.RPC_URL),
+  new providers.JsonRpcProvider(process.env.ARB_SEPOLIA_RPC ?? CHAIN_INFO.ArbSepolia.RPC_URL),
 );
 rpcProviders.set(
   CHAIN_INFO.EthSepolia.chainID,
-  new providers.JsonRpcProvider(CHAIN_INFO.EthSepolia.RPC_URL),
+  new providers.JsonRpcProvider(process.env.ETH_SEPOLIA_RPC ?? CHAIN_INFO.EthSepolia.RPC_URL),
 );
 rpcProviders.set(
   CHAIN_INFO.EthMainnet.chainID,
-  new providers.JsonRpcProvider(CHAIN_INFO.EthMainnet.RPC_URL),
+  new providers.JsonRpcProvider(process.env.ETH_MAINNET_RPC ?? CHAIN_INFO.EthMainnet.RPC_URL),
 );
-
-if (process.env.ARB_SEPOLIA_RPC) {
-  rpcProviders.set(
-    CHAIN_INFO.ArbSepolia.chainID,
-    new providers.JsonRpcProvider(process.env.ARB_SEPOLIA_RPC),
-  );
-}
-if (process.env.ARB_ONE_RPC) {
-  rpcProviders.set(
-    CHAIN_INFO.ArbOne.chainID,
-    new providers.JsonRpcProvider(process.env.ARB_ONE_RPC),
-  );
-}
-if (process.env.ETH_MAINNET_RPC) {
-  rpcProviders.set(
-    CHAIN_INFO.EthMainnet.chainID,
-    new providers.JsonRpcProvider(process.env.ETH_MAINNET_RPC),
-  );
-}
-if (process.env.ETH_SEPOLIA_RPC) {
-  rpcProviders.set(
-    CHAIN_INFO.EthSepolia.chainID,
-    new providers.JsonRpcProvider(process.env.ETH_SEPOLIA_RPC),
-  );
-}
 
 const privateKey = process.env.PRIVATE_KEY as `0x${string}`;
 
@@ -66,6 +47,45 @@ const server = new McpServer({
   name: 'Arbgent',
   version: '1.0.0',
 });
+
+server.registerTool(
+  'get_eth_balance',
+  {
+    description:
+      'Returns the balances of eth on each chain supplied (ArbOne, ArbSepolia, EthMainnet, EthSepolia).',
+    inputSchema: {
+      ChainIDs: z
+        .optional(z.array(z.number()))
+        .describe(
+          'The chains that you want eth balance information on, Returns all chain balances if left blank',
+        ),
+      Address: z
+        .optional(z.string())
+        .describe(
+          'The address to get the balance of, uses the address of the privatekey if left blank',
+        ),
+    },
+  },
+  async ({ ChainIDs, Address }) => {
+    const checkAddress = Address ?? wallet.address;
+    const ids = ChainIDs ?? rpcProviders.keys();
+    const info: string[] = [];
+    info.push(`Eth balance for address: ${checkAddress}`);
+    for (const id of ids) {
+      const provider = rpcProviders.get(id);
+      const balance = await provider?.getBalance(checkAddress);
+      info.push(`ChainID: ${id}, Eth Balance: ${balance}`);
+    }
+    return {
+      content: [
+        {
+          type: 'text',
+          text: info.join('\n'),
+        },
+      ],
+    };
+  },
+);
 
 server.registerTool(
   'bridge_eth_Parent_to_Child',
@@ -121,7 +141,9 @@ server.registerTool(
       ParentChainID: z.number().describe('The Parent chainID'),
       ChildChainID: z.number().describe('The Child chainID'),
       amount: z.string().describe('The amount of eth to bridge'),
-      destinationAddress: z.optional(z.string()).describe("Optional parent chain destination address")
+      destinationAddress: z
+        .optional(z.string())
+        .describe('Optional parent chain destination address'),
     },
   },
   async ({ ParentChainID, ChildChainID, amount, destinationAddress }) => {
@@ -145,18 +167,18 @@ server.registerTool(
       amount: utils.parseEther(amount),
       childSigner,
       from: wallet.address,
-      destinationAddress: destinationAddress ?? wallet.address
-    })
+      destinationAddress: destinationAddress ?? wallet.address,
+    });
 
     const link = await getTransactionExplorerLink(withdrawTx);
     if (link == undefined) console.error('Something very wrong happened');
 
-    const depositReceipt = await withdrawTx.wait();
+    const withdrawReceipt = await withdrawTx.wait();
     return {
       content: [
         {
           type: 'text',
-          text: `Bridged ${amount} ETH from chain ${ParentChainID} to ${ChildChainID}.\nParent (L1) tx: ${depositReceipt.transactionHash} (${depositReceipt.status === 1 ? 'success' : 'reverted'}, block ${depositReceipt.blockNumber}, gas used ${depositReceipt.gasUsed.toString()})\n\n ${link ? `\n\nView on explorer: ${link}` : ''}The ETH will arrive on the child chain once the retryable ticket is auto-redeemed (usually a few minutes).`,
+          text: `Initiated withdrawal of ${amount} ETH from chain ${ChildChainID} to ${ParentChainID} (recipient ${destinationAddress ?? wallet.address}).\nChild (L2) tx: ${withdrawReceipt.transactionHash} (${withdrawReceipt.status === 1 ? 'success' : 'reverted'}, block ${withdrawReceipt.blockNumber}, gas used ${withdrawReceipt.gasUsed.toString()})${link ? `\n\nView on explorer: ${link}` : ''}\n\nThe withdrawal must clear the dispute window (~1 week on mainnet, ~1 hour on Sepolia) before it can be claimed. Once confirmed, run execute_withdrawal with this transaction hash to claim the ETH on the parent chain.`,
         },
       ],
     };
@@ -164,9 +186,10 @@ server.registerTool(
 );
 
 server.registerTool(
-  'bridge_status',
+  'bridge_status_and_redeem',
   {
-    description: 'check the status of a bridge transaction, either deposit or withdraw',
+    description:
+      'check the status of a bridge transaction, either deposit or withdraw, will redeem if possible',
     inputSchema: {
       ParentChainID: z.number().describe('The Parent chainID'),
       ChildChainID: z.number().describe('The Child chainID'),
@@ -216,7 +239,8 @@ server.registerTool(
       }
       const lines: string[] = [];
       for (const [i, message] of messages.entries()) {
-        const label = messages.length > 1 ? `Deposit message ${i + 1}/${messages.length}` : `Deposit message`;
+        const label =
+          messages.length > 1 ? `Deposit message ${i + 1}/${messages.length}` : `Deposit message`;
         const status = await message.status();
 
         switch (status) {
@@ -230,15 +254,12 @@ server.registerTool(
             lines.push(`${label}: unknown status ${status}`);
         }
       }
-
       return {
         content: [{ type: 'text', text: lines.join('\n') }],
       };
-    }
-    else if (L2txReceipt) {
-      const childReceipt = new ChildTransactionReceipt(L2txReceipt)
-      const messages = await childReceipt.getChildToParentMessages(childProvider)
-      const events = await childReceipt.getChildToParentEvents()
+    } else {
+      const childReceipt = new ChildTransactionReceipt(L2txReceipt);
+      const messages = await childReceipt.getChildToParentMessages(wallet.connect(parentProvider));
       if (messages.length === 0) {
         return {
           content: [
@@ -251,26 +272,41 @@ server.registerTool(
       }
       const lines: string[] = [];
       for (const [i, message] of messages.entries()) {
-        const label = messages.length > 1 ? `Withdraw message ${i + 1}/${messages.length}` : `Withdraw message`;
-        const status = await message.status(childProvider)
+        const label =
+          messages.length > 1 ? `Withdraw message ${i + 1}/${messages.length}` : `Withdraw message`;
+        const status = await message.status(childProvider);
         switch (status) {
           case ChildToParentMessageStatus.UNCONFIRMED:
-            lines.push(`${label} is still unconfirmed, check back later (takes around 1 week for mainnet and 1 hour for sepolia)`);
-            break
+            lines.push(
+              `${label} is still unconfirmed, check back later (takes around 1 week for mainnet and 1 hour for sepolia)`,
+            );
+            break;
           case ChildToParentMessageStatus.CONFIRMED:
-            lines.push(`${label} is ready, will execute on parent chain`);
-            new ChildToParentMessageWriter(wallet.connect(parentProvider), events[i], parentProvider)
-
-            break
+            {
+              const execTx = await message.execute(childProvider);
+              const link = await getTransactionExplorerLink(execTx);
+              const execReceipt = await execTx.wait();
+              lines.push(
+                `${label}: claimed on chain ${ParentChainID}. Parent (L1) tx: ${execReceipt.transactionHash} (${execReceipt.status === 1 ? 'success' : 'reverted'}, block ${execReceipt.blockNumber}, gas used ${execReceipt.gasUsed.toString()})${link ? `\n\nView on explorer: ${link}` : ''}`,
+              );
+            }
+            break;
           case ChildToParentMessageStatus.EXECUTED:
             lines.push(`${label} has already been executed on parent chain`);
-            break
+            break;
           default:
             lines.push(`${label}: unknown status ${status}`);
         }
       }
+      return {
+        content: [
+          {
+            type: 'text',
+            text: lines.join('\n'),
+          },
+        ],
+      };
     }
-
   },
 );
 

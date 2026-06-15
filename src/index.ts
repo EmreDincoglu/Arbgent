@@ -211,10 +211,10 @@ server.registerTool(
     }
 
     const hash = transactionHash as `0x${string}`;
-    const L1txReceipt = await parentProvider.getTransactionReceipt(hash);
-    const L2txReceipt = await parentProvider.getTransactionReceipt(hash);
+    const ParentTxReceipt = await parentProvider.getTransactionReceipt(hash);
+    const ChildTxReceipt = await childProvider.getTransactionReceipt(hash);
 
-    if (L1txReceipt === null && L2txReceipt === null) {
+    if (ParentTxReceipt === null && ChildTxReceipt === null) {
       return {
         content: [
           {
@@ -224,8 +224,8 @@ server.registerTool(
         ],
       };
     }
-    if (L1txReceipt) {
-      const parentReceipt = new ParentTransactionReceipt(L1txReceipt);
+    if (ParentTxReceipt) {
+      const parentReceipt = new ParentTransactionReceipt(ParentTxReceipt);
       const messages = await parentReceipt.getEthDeposits(childProvider);
       if (messages.length === 0) {
         return {
@@ -258,7 +258,7 @@ server.registerTool(
         content: [{ type: 'text', text: lines.join('\n') }],
       };
     } else {
-      const childReceipt = new ChildTransactionReceipt(L2txReceipt);
+      const childReceipt = new ChildTransactionReceipt(ChildTxReceipt);
       const messages = await childReceipt.getChildToParentMessages(wallet.connect(parentProvider));
       if (messages.length === 0) {
         return {

@@ -1,4 +1,4 @@
-import { EthBridger, EthDepositMessageStatus, ParentTransactionReceipt } from '@arbitrum/sdk';
+import { ChildToParentMessageStatus, ChildToParentMessageWriter, ChildTransactionReceipt, EthBridger, EthDepositMessageStatus, ParentTransactionReceipt } from '@arbitrum/sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { config } from 'dotenv';
@@ -68,31 +68,31 @@ const server = new McpServer({
 });
 
 server.registerTool(
-  'bridge_eth_L1_to_L2',
+  'bridge_eth_Parent_to_Child',
   {
     description: 'Bridges eth from L1 parent chain to L2 child chain',
     inputSchema: {
-      l1ChainID: z.number().describe('The Parent chainID'),
-      l2ChainID: z.number().describe('The Child chainID'),
+      ParentChainID: z.number().describe('The Parent chainID'),
+      ChildChainID: z.number().describe('The Child chainID'),
       amount: z.string().describe('The amount of eth to bridge'),
     },
   },
-  async ({ l1ChainID, l2ChainID, amount }) => {
-    const l1Provider = rpcProviders.get(l1ChainID);
-    const l2Provider = rpcProviders.get(l2ChainID);
-    if (l1Provider === undefined) {
+  async ({ ParentChainID, ChildChainID, amount }) => {
+    const parentProvider = rpcProviders.get(ParentChainID);
+    const childProvider = rpcProviders.get(ChildChainID);
+    if (parentProvider === undefined) {
       return {
-        content: [{ type: 'text', text: `provider unavailable for chainID ${l1ChainID}` }],
+        content: [{ type: 'text', text: `provider unavailable for chainID ${ParentChainID}` }],
       };
     }
-    if (l2Provider === undefined) {
+    if (childProvider === undefined) {
       return {
-        content: [{ type: 'text', text: `provider unavailable for chainID ${l2ChainID}` }],
+        content: [{ type: 'text', text: `provider unavailable for chainID ${ChildChainID}` }],
       };
     }
 
-    const ethBridger = await EthBridger.fromProvider(l2Provider);
-    const parentSigner = wallet.connect(l1Provider);
+    const ethBridger = await EthBridger.fromProvider(childProvider);
+    const parentSigner = wallet.connect(parentProvider);
 
     const depositTx = await ethBridger.deposit({
       amount: utils.parseEther(amount),
@@ -106,7 +106,57 @@ server.registerTool(
       content: [
         {
           type: 'text',
-          text: `Bridged ${amount} ETH from chain ${l1ChainID} to ${l2ChainID}.\nParent (L1) tx: ${depositReceipt.transactionHash} (${depositReceipt.status === 1 ? 'success' : 'reverted'}, block ${depositReceipt.blockNumber}, gas used ${depositReceipt.gasUsed.toString()})\n\n ${link ? `\n\nView on explorer: ${link}` : ''}The ETH will arrive on the child chain once the retryable ticket is auto-redeemed (usually a few minutes).`,
+          text: `Bridged ${amount} ETH from chain ${ParentChainID} to ${ChildChainID}.\nParent (L1) tx: ${depositReceipt.transactionHash} (${depositReceipt.status === 1 ? 'success' : 'reverted'}, block ${depositReceipt.blockNumber}, gas used ${depositReceipt.gasUsed.toString()})\n\n ${link ? `\n\nView on explorer: ${link}` : ''}The ETH will arrive on the child chain once the retryable ticket is auto-redeemed (usually a few minutes).`,
+        },
+      ],
+    };
+  },
+);
+
+server.registerTool(
+  'bridge_eth_Child_to_Parent',
+  {
+    description: 'Bridges eth from L2 child chain to L1 parent chain',
+    inputSchema: {
+      ParentChainID: z.number().describe('The Parent chainID'),
+      ChildChainID: z.number().describe('The Child chainID'),
+      amount: z.string().describe('The amount of eth to bridge'),
+      destinationAddress: z.optional(z.string()).describe("Optional parent chain destination address")
+    },
+  },
+  async ({ ParentChainID, ChildChainID, amount, destinationAddress }) => {
+    const parentProvider = rpcProviders.get(ParentChainID);
+    const childProvider = rpcProviders.get(ChildChainID);
+    if (parentProvider === undefined) {
+      return {
+        content: [{ type: 'text', text: `provider unavailable for chainID ${ParentChainID}` }],
+      };
+    }
+    if (childProvider === undefined) {
+      return {
+        content: [{ type: 'text', text: `provider unavailable for chainID ${ChildChainID}` }],
+      };
+    }
+
+    const ethBridger = await EthBridger.fromProvider(childProvider);
+    const childSigner = wallet.connect(childProvider);
+
+    const withdrawTx = await ethBridger.withdraw({
+      amount: utils.parseEther(amount),
+      childSigner,
+      from: wallet.address,
+      destinationAddress: destinationAddress ?? wallet.address
+    })
+
+    const link = await getTransactionExplorerLink(withdrawTx);
+    if (link == undefined) console.error('Something very wrong happened');
+
+    const depositReceipt = await withdrawTx.wait();
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Bridged ${amount} ETH from chain ${ParentChainID} to ${ChildChainID}.\nParent (L1) tx: ${depositReceipt.transactionHash} (${depositReceipt.status === 1 ? 'success' : 'reverted'}, block ${depositReceipt.blockNumber}, gas used ${depositReceipt.gasUsed.toString()})\n\n ${link ? `\n\nView on explorer: ${link}` : ''}The ETH will arrive on the child chain once the retryable ticket is auto-redeemed (usually a few minutes).`,
         },
       ],
     };
@@ -116,74 +166,111 @@ server.registerTool(
 server.registerTool(
   'bridge_status',
   {
-    description: 'check the status of a bridge transaction',
+    description: 'check the status of a bridge transaction, either deposit or withdraw',
     inputSchema: {
-      l1ChainID: z.number().describe('The Parent chainID'),
-      l2ChainID: z.number().describe('The Child chainID'),
+      ParentChainID: z.number().describe('The Parent chainID'),
+      ChildChainID: z.number().describe('The Child chainID'),
       transactionHash: z.string().describe('The bridge transaction'),
     },
   },
-  async ({ l1ChainID, l2ChainID, transactionHash }) => {
-    const l1Provider = rpcProviders.get(l1ChainID);
-    const l2Provider = rpcProviders.get(l2ChainID);
-    if (l1Provider === undefined) {
+  async ({ ParentChainID, ChildChainID, transactionHash }) => {
+    const parentProvider = rpcProviders.get(ParentChainID);
+    const childProvider = rpcProviders.get(ChildChainID);
+    if (parentProvider === undefined) {
       return {
-        content: [{ type: 'text', text: `provider unavailable for chainID ${l1ChainID}` }],
+        content: [{ type: 'text', text: `provider unavailable for chainID ${ParentChainID}` }],
       };
     }
-    if (l2Provider === undefined) {
+    if (childProvider === undefined) {
       return {
-        content: [{ type: 'text', text: `provider unavailable for chainID ${l2ChainID}` }],
+        content: [{ type: 'text', text: `provider unavailable for chainID ${ChildChainID}` }],
       };
     }
 
     const hash = transactionHash as `0x${string}`;
-    const txReceipt = await l1Provider.getTransactionReceipt(hash);
-    if (txReceipt === null) {
+    const L1txReceipt = await parentProvider.getTransactionReceipt(hash);
+    const L2txReceipt = await parentProvider.getTransactionReceipt(hash);
+
+    if (L1txReceipt === null && L2txReceipt === null) {
       return {
         content: [
           {
             type: 'text',
-            text: `No receipt found for ${hash} on chain ${l1ChainID}. The transaction may not be mined yet.`,
+            text: `No receipt found for ${hash} on chain either L1 or L2. The transaction may not be mined yet.`,
           },
         ],
       };
     }
+    if (L1txReceipt) {
+      const parentReceipt = new ParentTransactionReceipt(L1txReceipt);
+      const messages = await parentReceipt.getEthDeposits(childProvider);
+      if (messages.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `No parent-to-child (L1->L2) messages found in ${hash}. This does not look like a bridge deposit transaction.`,
+            },
+          ],
+        };
+      }
+      const lines: string[] = [];
+      for (const [i, message] of messages.entries()) {
+        const label = messages.length > 1 ? `Deposit message ${i + 1}/${messages.length}` : `Deposit message`;
+        const status = await message.status();
 
-    const parentReceipt = new ParentTransactionReceipt(txReceipt);
-    const messages = await parentReceipt.getEthDeposits(l2Provider);
+        switch (status) {
+          case EthDepositMessageStatus.PENDING:
+            lines.push(`${label}: EthDeposit is still pending, check back later`);
+            break;
+          case EthDepositMessageStatus.DEPOSITED:
+            lines.push(`${label}: Eth has been deposited`);
+            break;
+          default:
+            lines.push(`${label}: unknown status ${status}`);
+        }
+      }
 
-    if (messages.length === 0) {
       return {
-        content: [
-          {
-            type: 'text',
-            text: `No parent-to-child (L1->L2) messages found in ${hash}. This does not look like a bridge deposit transaction.`,
-          },
-        ],
+        content: [{ type: 'text', text: lines.join('\n') }],
       };
     }
+    else if (L2txReceipt) {
+      const childReceipt = new ChildTransactionReceipt(L2txReceipt)
+      const messages = await childReceipt.getChildToParentMessages(childProvider)
+      const events = await childReceipt.getChildToParentEvents()
+      if (messages.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `No child-to-parent (L2->L1) messages found in ${hash}. This does not look like a bridge withdraw transaction.`,
+            },
+          ],
+        };
+      }
+      const lines: string[] = [];
+      for (const [i, message] of messages.entries()) {
+        const label = messages.length > 1 ? `Withdraw message ${i + 1}/${messages.length}` : `Withdraw message`;
+        const status = await message.status(childProvider)
+        switch (status) {
+          case ChildToParentMessageStatus.UNCONFIRMED:
+            lines.push(`${label} is still unconfirmed, check back later (takes around 1 week for mainnet and 1 hour for sepolia)`);
+            break
+          case ChildToParentMessageStatus.CONFIRMED:
+            lines.push(`${label} is ready, will execute on parent chain`);
+            new ChildToParentMessageWriter(wallet.connect(parentProvider), events[i], parentProvider)
 
-    const lines: string[] = [];
-    for (const [i, message] of messages.entries()) {
-      const label = messages.length > 1 ? `Message ${i + 1}/${messages.length}` : `Bridge message`;
-      const status = await message.status();
-
-      switch (status) {
-        case EthDepositMessageStatus.PENDING:
-          lines.push(`${label}: EthDeposit is still pending, check back later`);
-          break;
-        case EthDepositMessageStatus.DEPOSITED:
-          lines.push(`${label}: Eth has been deposited`);
-          break;
-        default:
-          lines.push(`${label}: unknown status ${status}`);
+            break
+          case ChildToParentMessageStatus.EXECUTED:
+            lines.push(`${label} has already been executed on parent chain`);
+            break
+          default:
+            lines.push(`${label}: unknown status ${status}`);
+        }
       }
     }
 
-    return {
-      content: [{ type: 'text', text: lines.join('\n') }],
-    };
   },
 );
 

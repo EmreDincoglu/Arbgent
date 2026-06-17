@@ -49,7 +49,7 @@ const server = new McpServer({
   name: 'Arbgent',
   version: '1.0.0',
 });
-
+// This is good
 server.registerTool(
   'get_eth_balance',
   {
@@ -77,9 +77,15 @@ server.registerTool(
       const provider = rpcProviders.get(id);
       if (provider === undefined) {
         info.push(`ChainID: ${id} provider unavailable`);
+        continue
       }
-      const balance = await provider?.getBalance(checkAddress);
-      info.push(`ChainID: ${id}, Eth Balance: ${balance}`);
+      try {
+        const balance = await provider.getBalance(checkAddress);
+        info.push(`ChainID: ${id}, Eth Balance: ${balance}`);
+      }
+      catch (err) {
+        info.push(`Unable to get eth balance info on Chain: ${id}, error: ${err}`)
+      }
     }
     return {
       content: [
@@ -91,7 +97,7 @@ server.registerTool(
     };
   },
 );
-
+// Looks good
 server.registerTool(
   'get_erc20_balance',
   {
@@ -112,12 +118,11 @@ server.registerTool(
     const provider = rpcProviders.get(ChainID);
     const info: string[] = [];
     if (provider === undefined) {
-      info.push(`ChainID: ${ChainID}, provider unavailable`);
       return {
         content: [
           {
             type: 'text',
-            text: info.join('\n'),
+            text: `ChainID: ${ChainID}, provider unavailable`,
           },
         ],
       };
@@ -224,6 +229,7 @@ server.registerTool(
     };
   },
 );
+
 server.registerTool(
   'bridge_eth_Parent_to_Child',
   {
@@ -269,7 +275,7 @@ server.registerTool(
     };
   },
 );
-
+// Can remove the ParentChainID field as there is only one parent chain
 server.registerTool(
   'bridge_eth_Child_to_Parent',
   {
@@ -321,7 +327,7 @@ server.registerTool(
     };
   },
 );
-
+// Can remove the ParentChainID field as there is only one parent chain
 server.registerTool(
   'bridge_erc20_Child_to_Parent',
   {
@@ -380,7 +386,7 @@ server.registerTool(
     };
   },
 );
-
+// This one can use some tidying for sure
 server.registerTool(
   'bridge_status_and_redeem',
   {
@@ -553,6 +559,7 @@ server.registerTool(
   },
 );
 
+// Looks good  
 server.registerTool(
   'send_erc20',
   {

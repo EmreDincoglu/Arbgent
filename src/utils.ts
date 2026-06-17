@@ -1,17 +1,17 @@
 import type { providers } from 'ethers';
 
 export async function getTransactionExplorerLink(
-  ts: providers.TransactionResponse,
+  tx: providers.TransactionResponse,
 ): Promise<string | undefined> {
-  switch (ts.chainId) {
+  switch (tx.chainId) {
     case 42161:
-      return `https://arbiscan.io/tx/${ts.hash}`;
+      return `https://arbiscan.io/tx/${tx.hash}`;
     case 421614:
-      return `https://sepolia.arbiscan.io/tx/${ts.hash}`;
+      return `https://sepolia.arbiscan.io/tx/${tx.hash}`;
     case 1:
-      return `https://etherscan.io/tx/${ts.hash}`;
+      return `https://etherscan.io/tx/${tx.hash}`;
     case 11155111:
-      return `https://sepolia.etherscan.io/tx/${ts.hash}`;
+      return `https://sepolia.etherscan.io/tx/${tx.hash}`;
     default:
       return undefined;
   }
